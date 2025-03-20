@@ -112,6 +112,9 @@ impl RowGroupAccessPlanFilter {
         predicate: &PruningPredicate,
         metrics: &ParquetFileMetrics,
     ) {
+        // scoped timer updates on drop
+        let _timer_guard = metrics.statistics_eval_time.timer();
+
         assert_eq!(groups.len(), self.access_plan.len());
         // Indexes of row groups still to scan
         // blaze: for less reading of dictionary pages, we still prune in separated passes
@@ -132,7 +135,10 @@ impl RowGroupAccessPlanFilter {
                 Ok(values) => {
                     if !values[0] {
                         self.access_plan.skip(rg_idx);
+                        metrics.row_groups_pruned_statistics.add(1);
                         continue; // no need to prune with dictionary
+                    } else {
+                        metrics.row_groups_matched_statistics.add(1);
                     }
                 }
                 Err(e) => {
@@ -149,6 +155,9 @@ impl RowGroupAccessPlanFilter {
                 Ok(values) => {
                     if !values[0] {
                         self.access_plan.skip(rg_idx);
+                        metrics.row_groups_pruned_dictionaries.add(1);
+                    } else {
+                        metrics.row_groups_matched_dictionaries.add(1);
                     }
                 }
                 Err(e) => {
@@ -173,6 +182,9 @@ impl RowGroupAccessPlanFilter {
         predicate: &PruningPredicate,
         metrics: &ParquetFileMetrics,
     ) {
+        // scoped timer updates on drop
+        let _timer_guard = metrics.bloom_filter_eval_time.timer();
+
         assert_eq!(builder.metadata().num_row_groups(), self.access_plan.len());
         for idx in 0..self.access_plan.len() {
             if !self.access_plan.should_scan(idx) {

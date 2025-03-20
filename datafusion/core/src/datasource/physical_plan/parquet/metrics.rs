@@ -37,12 +37,20 @@ pub struct ParquetFileMetrics {
     pub row_groups_matched_statistics: Count,
     /// Number of row groups pruned by statistics
     pub row_groups_pruned_statistics: Count,
+    /// Number of row groups whose dictionaries were checked and matched (not pruned)
+    pub row_groups_matched_dictionaries: Count,
+    /// Number of row groups pruned by dictionaries
+    pub row_groups_pruned_dictionaries: Count,
     /// Total number of bytes scanned
     pub bytes_scanned: Count,
     /// Total rows filtered out by predicates pushed into parquet scan
     pub pushdown_rows_filtered: Count,
     /// Total time spent evaluating pushdown filters
     pub pushdown_eval_time: Time,
+    /// Total time spent evaluating row group-level statistics filters
+    pub statistics_eval_time: Time,
+    /// Total time spent evaluating row group Bloom Filters
+    pub bloom_filter_eval_time: Time,
     /// Total rows filtered out by parquet page index
     pub page_index_rows_filtered: Count,
     /// Total time spent evaluating parquet page index filters
@@ -76,6 +84,14 @@ impl ParquetFileMetrics {
             .with_new_label("filename", filename.to_string())
             .counter("row_groups_pruned_statistics", partition);
 
+        let row_groups_matched_dictionaries = MetricBuilder::new(metrics)
+            .with_new_label("filename", filename.to_string())
+            .counter("row_groups_matched_dictionaries", partition);
+
+        let row_groups_pruned_dictionaries = MetricBuilder::new(metrics)
+            .with_new_label("filename", filename.to_string())
+            .counter("row_groups_pruned_dictionaries", partition);
+
         let bytes_scanned = MetricBuilder::new(metrics)
             .with_new_label("filename", filename.to_string())
             .counter("bytes_scanned", partition);
@@ -87,6 +103,13 @@ impl ParquetFileMetrics {
         let pushdown_eval_time = MetricBuilder::new(metrics)
             .with_new_label("filename", filename.to_string())
             .subset_time("pushdown_eval_time", partition);
+        let statistics_eval_time = MetricBuilder::new(metrics)
+            .with_new_label("filename", filename.to_string())
+            .subset_time("statistics_eval_time", partition);
+        let bloom_filter_eval_time = MetricBuilder::new(metrics)
+            .with_new_label("filename", filename.to_string())
+            .subset_time("bloom_filter_eval_time", partition);
+
         let page_index_rows_filtered = MetricBuilder::new(metrics)
             .with_new_label("filename", filename.to_string())
             .counter("page_index_rows_filtered", partition);
@@ -101,10 +124,14 @@ impl ParquetFileMetrics {
             row_groups_pruned_bloom_filter,
             row_groups_matched_statistics,
             row_groups_pruned_statistics,
+            row_groups_matched_dictionaries,
+            row_groups_pruned_dictionaries,
             bytes_scanned,
             pushdown_rows_filtered,
             pushdown_eval_time,
             page_index_rows_filtered,
+            statistics_eval_time,
+            bloom_filter_eval_time,
             page_index_eval_time,
         }
     }
