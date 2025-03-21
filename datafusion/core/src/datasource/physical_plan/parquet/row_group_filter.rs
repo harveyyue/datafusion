@@ -117,55 +117,89 @@ impl RowGroupAccessPlanFilter {
 
         assert_eq!(groups.len(), self.access_plan.len());
         // Indexes of row groups still to scan
-        // blaze: for less reading of dictionary pages, we still prune in separated passes
         let row_group_indexes = self.access_plan.row_group_indexes();
-        for &rg_idx in &row_group_indexes {
-            let row_group_metadatas = vec![&groups[rg_idx]];
-            let mut pruning_stats = RowGroupPruningStatistics {
-                row_group_metadatas,
-                arrow_schema,
-                use_dictionary_filtering: false,
-                cached_dictionaries: Mutex::new(vec![]),
-                builder: RefCell::new(builder),
-            };
+        let row_group_metadatas = row_group_indexes
+            .iter()
+            .map(|&i| &groups[i])
+            .collect::<Vec<_>>();
 
-            // prune using two runs because pruning with dictionary filtering is more expensive
-            // first run: prune without dictionary filtering
-            match predicate.prune(&pruning_stats) {
-                Ok(values) => {
-                    if !values[0] {
-                        self.access_plan.skip(rg_idx);
+        let pruning_stats = RowGroupPruningStatistics {
+            row_group_metadatas,
+            arrow_schema,
+            use_dictionary_filtering: false,
+            cached_dictionaries: Mutex::new(vec![]),
+            builder: RefCell::new(builder),
+        };
+
+        // try to prune the row groups in a single call
+        match predicate.prune(&pruning_stats) {
+            Ok(values) => {
+                // values[i] is false means the predicate could not be true for row group i
+                for (idx, &value) in row_group_indexes.iter().zip(values.iter()) {
+                    if !value {
+                        self.access_plan.skip(*idx);
                         metrics.row_groups_pruned_statistics.add(1);
-                        continue; // no need to prune with dictionary
                     } else {
                         metrics.row_groups_matched_statistics.add(1);
                     }
                 }
-                Err(e) => {
-                    log::info!("Error evaluating row group predicate values without dictionary {e}");
-                    metrics.predicate_evaluation_errors.add(1);
-                    continue; // no need to prune with dictionary
-                }
             }
-
-            // second run: prune with dictionary filtering
-            pruning_stats.use_dictionary_filtering = true;
-            pruning_stats.cached_dictionaries = Mutex::new(vec![]);
-            match predicate.prune(&pruning_stats) {
-                Ok(values) => {
-                    if !values[0] {
-                        self.access_plan.skip(rg_idx);
-                        metrics.row_groups_pruned_dictionaries.add(1);
-                    } else {
-                        metrics.row_groups_matched_dictionaries.add(1);
-                    }
-                }
-                Err(e) => {
-                    log::info!("Error evaluating row group predicate values with dictionary {e}");
-                    metrics.predicate_evaluation_errors.add(1);
-                }
+            // stats filter array could not be built, so we can't prune
+            Err(e) => {
+                log::debug!("Error evaluating row group predicate values {e}");
+                metrics.predicate_evaluation_errors.add(1);
             }
         }
+
+        // blaze: for less reading of dictionary pages, we still prune in separated passes
+        // let row_group_indexes = self.access_plan.row_group_indexes();
+        // for &rg_idx in &row_group_indexes {
+        //     let row_group_metadatas = vec![&groups[rg_idx]];
+        //     let mut pruning_stats = RowGroupPruningStatistics {
+        //         row_group_metadatas,
+        //         arrow_schema,
+        //         use_dictionary_filtering: false,
+        //         cached_dictionaries: Mutex::new(vec![]),
+        //         builder: RefCell::new(builder),
+        //     };
+        //
+        //     // prune using two runs because pruning with dictionary filtering is more expensive
+        //     // first run: prune without dictionary filtering
+        //     match predicate.prune(&pruning_stats) {
+        //         Ok(values) => {
+        //             if !values[0] {
+        //                 self.access_plan.skip(rg_idx);
+        //                 metrics.row_groups_pruned_statistics.add(1);
+        //                 continue; // no need to prune with dictionary
+        //             } else {
+        //                 metrics.row_groups_matched_statistics.add(1);
+        //             }
+        //         }
+        //         Err(e) => {
+        //             log::info!("Error evaluating row group predicate values without dictionary {e}");
+        //             metrics.predicate_evaluation_errors.add(1);
+        //             continue; // no need to prune with dictionary
+        //         }
+        //     }
+        //
+        //     // second run: prune with dictionary filtering
+        //     pruning_stats.use_dictionary_filtering = true;
+        //     pruning_stats.cached_dictionaries = Mutex::new(vec![]);
+        //     match predicate.prune(&pruning_stats) {
+        //         Ok(values) => {
+        //             if !values[0] {
+        //                 self.access_plan.skip(rg_idx);
+        //                 metrics.row_groups_pruned_dictionaries.add(1);
+        //             } else {
+        //                 metrics.row_groups_matched_dictionaries.add(1);
+        //             }
+        //         }
+        //         Err(e) => {
+        //             log::info!("Error evaluating row group predicate values with dictionary {e}");
+        //             metrics.predicate_evaluation_errors.add(1);
+        //         }
+        //     }
+        // }
     }
 
     /// Prune remaining row groups using available bloom filters and the
